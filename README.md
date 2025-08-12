@@ -1,3 +1,5 @@
+# Bias_Testing
+AI Testing - Bias
 # Advanced Bias Testing for Fraud Detection Models
 
 This repository contains a comprehensive bias testing framework for fraud detection models. The script performs extensive bias analysis including basic metrics, advanced fairness metrics, intersectional analysis, counterfactual fairness testing, and SHAP explainability.
