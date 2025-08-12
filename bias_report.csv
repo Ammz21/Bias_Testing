@@ -1,0 +1,26 @@
+metric_category,metric_name,attribute,group,value,interpretation
+Basic,Selection Rate,Customer_Type,Basic,0.15326633165829145,Rate of positive predictions
+Basic,Selection Rate,Customer_Type,Premium,0.011532125205930808,Rate of positive predictions
+Basic,Selection Rate,Customer_Type,Standard,0.044221105527638194,Rate of positive predictions
+Basic,Demographic Parity Difference,Customer_Type,Overall,0.14173420645236065,Difference in selection rates (closer to 0 is better)
+Basic,Selection Rate,Transaction_Type,ATM,0.09375,Rate of positive predictions
+Basic,Selection Rate,Transaction_Type,Online,0.04337152209492635,Rate of positive predictions
+Basic,Selection Rate,Transaction_Type,POS,0.0583756345177665,Rate of positive predictions
+Basic,Demographic Parity Difference,Transaction_Type,Overall,0.05037847790507365,Difference in selection rates (closer to 0 is better)
+Advanced,Equal Opportunity Difference,Customer_Type,Overall,0.36363636363636365,TPR difference between groups
+Advanced,Predictive Equality Difference,Customer_Type,Overall,0.07923497267759563,FPR difference between groups
+Advanced,Equalized Odds Difference,Customer_Type,Overall,0.36363636363636365,Max of TPR and FPR differences
+Advanced,FNR Difference,Customer_Type,Overall,0.36363636363636365,False Negative Rate difference
+Advanced,Theil Index,Customer_Type,Overall,0.3568238235650003,Inequality measure (lower is better)
+Advanced,Equal Opportunity Difference,Transaction_Type,Overall,0.31999999999999995,TPR difference between groups
+Advanced,Predictive Equality Difference,Transaction_Type,Overall,0.02511070995402364,FPR difference between groups
+Advanced,Equalized Odds Difference,Transaction_Type,Overall,0.31999999999999995,Max of TPR and FPR differences
+Advanced,FNR Difference,Transaction_Type,Overall,0.32,False Negative Rate difference
+Advanced,Theil Index,Transaction_Type,Overall,0.05322839142797493,Inequality measure (lower is better)
+Intersectional,Max Selection Rate Difference,Customer_Type x Transaction_Type,Overall,0.19230769230769232,Maximum selection rate difference across intersections
+Counterfactual,Customer Type Flip - Mean Change,customer_type_flip,Overall,0.137092878584081,Average prediction change when flipping attribute
+Counterfactual,Customer Type Flip - % Changed,customer_type_flip,Overall,97.55,Percentage of predictions that changed
+Counterfactual,Transaction Type Flip - Mean Change,transaction_type_flip,Overall,0.054893077686638404,Average prediction change when flipping attribute
+Counterfactual,Transaction Type Flip - % Changed,transaction_type_flip,Overall,83.15,Percentage of predictions that changed
+Counterfactual,Both Attributes Flip - Mean Change,both_attributes_flip,Overall,0.13777047877268223,Average prediction change when flipping attribute
+Counterfactual,Both Attributes Flip - % Changed,both_attributes_flip,Overall,97.3,Percentage of predictions that changed
