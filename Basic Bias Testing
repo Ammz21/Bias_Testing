@@ -1,0 +1,1026 @@
+import pandas as pd
+
+import numpy as np
+
+import seaborn as sns
+
+import matplotlib.pyplot as plt
+
+import streamlit as st
+
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+
+from sklearn.linear_model import LogisticRegression
+
+from sklearn.svm import SVC
+
+from sklearn.neighbors import KNeighborsClassifier
+
+from xgboost import XGBClassifier
+
+from sklearn.model_selection import GridSearchCV, train_test_split
+
+from sklearn.metrics import classification_report, f1_score, confusion_matrix, accuracy_score, roc_auc_score
+
+from imblearn.pipeline import Pipeline as ImbPipeline
+
+from imblearn.over_sampling import SMOTE, ADASYN
+
+from imblearn.combine import SMOTEENN
+
+ 
+
+# Function to encode categorical variables
+
+def encode_categorical(df, encoder):
+
+    for col in ['Customer_Type', 'Transaction_Type']:
+
+        df[col] = encoder.fit_transform(df[col])
+
+    return df
+
+ 
+
+# Function to process date-time features
+
+def process_datetime(df):
+
+    df['Transaction_Date'] = pd.to_datetime(df['Transaction_Date'])
+
+    df['Transaction_Time'] = pd.to_datetime(df['Transaction_Time'])
+
+    df['Day'] = df['Transaction_Date'].dt.day
+
+    df['Hour'] = df['Transaction_Time'].dt.hour
+
+    df['Minute'] = df['Transaction_Time'].dt.minute
+
+    return df.drop(['Transaction_Date', 'Transaction_Time'], axis=1)
+
+ 
+
+# Function to add transaction frequency feature
+
+def add_transaction_frequency(df):
+
+    df['Transaction_Frequency'] = df.groupby('Customer_ID')['Customer_ID'].transform('count')
+
+    return df
+
+ 
+
+# Streamlit UI
+
+st.title("Bias Testing Using Fraud Detection")
+
+ 
+
+# Upload training data
+
+st.subheader("Upload Training Data")
+
+train_file = st.file_uploader("Choose a training data file", type=["xlsx"])
+
+ 
+
+# Upload test data
+
+st.subheader("Upload Test Data")
+
+test_file = st.file_uploader("Choose a test data file", type=["xlsx"])
+
+ 
+
+# Button to run the model
+
+if st.button("Run Model"):
+
+    if train_file is not None and test_file is not None:
+
+        # Initialize a common progress bar
+
+        progress_bar = st.progress(0)
+
+        progress_text = st.empty()
+
+ 
+
+        # Load data
+
+        progress_text.text("Loading data...")
+
+        train_data = pd.read_excel(train_file)
+
+        test_data = pd.read_excel(test_file)
+
+        progress_bar.progress(10)
+
+        progress_text.text("Data loaded successfully.")
+
+ 
+
+        # Display raw data loaded
+
+        st.subheader("Raw Data Loaded")
+
+        # Create two columns for displaying training and test data
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+
+            st.write("Training Data Preview:")
+
+            st.dataframe(train_data.head())
+
+            st.write("Total number of records in Training Data:", train_data.shape[0])
+
+        with col2:
+
+            st.write("Test Data Preview:")
+
+            st.dataframe(test_data.head())
+
+            st.write("Total number of records in Test Data:", test_data.shape[0])
+
+ 
+
+        st.subheader("Exploratory Data Analysis on Train and Test Data")
+
+        # Create two columns for EDA results
+
+        eda_col1, eda_col2 = st.columns(2)
+
+ 
+
+        # Missing values analysis for training data
+
+        with eda_col1:
+
+            missing_values_train = train_data.isna().sum()
+
+            missing_values_train = missing_values_train[missing_values_train > 0]  # Show only columns with missing values
+
+            # Create a DataFrame for missing values
+
+            missing_values_train_df = pd.DataFrame({
+
+                'Feature Name': missing_values_train.index,
+
+                'Missing Values': missing_values_train.values
+
+            })
+
+            if missing_values_train_df.empty:
+
+                st.write("No missing values occurred in training data.")
+
+            else:
+
+                st.write("Identify Missing Values in Training Data")
+
+                st.dataframe(missing_values_train_df)
+
+                st.markdown("<br><br>", unsafe_allow_html=True)  # Add two line breaks
+
+            # Plot missing values for training data
+
+            plt.figure(figsize=(10, 5))
+
+            sns.barplot(x=missing_values_train.index, y=missing_values_train.values)
+
+            plt.title('Missing Values in Training Data')
+
+            plt.xticks(rotation=45)
+
+            st.pyplot(plt)
+
+ 
+
+            # Fill missing values in training data
+
+            progress_text.text("Filling missing values in training data...")
+
+            progress_bar.progress(0.1)  # Start at 10%
+
+ 
+
+            # Define fill strategies for each column
+
+            fill_strategies_train = {
+
+                "Transaction_Date": "mode",
+
+                "Transaction_Time": "mode",
+
+                "Customer_Type": "mode",
+
+                "Transaction_Amount": "mean",
+
+                "Transaction_Type": "mode"
+
+            }
+
+            num_steps_train = len(fill_strategies_train)
+
+            for i, (col, strategy) in enumerate(fill_strategies_train.items()):
+
+                if train_data[col].isnull().any():
+
+                    if strategy == "mode":
+
+                        train_data[col].fillna(train_data[col].mode()[0], inplace=True)
+
+                    elif strategy == "mean":
+
+                        train_data[col].fillna(train_data[col].mean(), inplace=True)
+
+                    elif strategy == "median":
+
+                        train_data[col].fillna(train_data[col].median(), inplace=True)
+
+                progress_bar.progress(0.1 + (i + 1) / num_steps_train * 0.4)  # Update progress bar
+
+ 
+
+            # Create a DataFrame for missing values after filling
+
+            missing_values_train_after = train_data.isna().sum()
+
+            missing_values_train_after_df = pd.DataFrame({
+
+                'Feature Name': missing_values_train_after.index,
+
+                'Missing Values After Filling': missing_values_train_after.values
+
+            })
+
+            # Display the DataFrame for missing values after filling
+
+            st.subheader("Missing Values After Filling in Training Data")
+
+            st.dataframe(missing_values_train_after_df)
+
+ 
+
+            # Plot missing values for training data after filling
+
+            plt.figure(figsize=(10, 5))
+
+            sns.barplot(x=missing_values_train_after.index, y=missing_values_train_after.values)
+
+            plt.title('Identify Missing Values in Training Data (After Filling)')
+
+            plt.xticks(rotation=45)
+
+            st.pyplot(plt)
+
+ 
+
+            st.write("Training Data Descriptive Statistics:")
+
+            st.dataframe(train_data.describe())
+
+ 
+
+        # Missing values analysis for test data
+
+        with eda_col2:
+
+            missing_values_test = test_data.isna().sum()
+
+            missing_values_test = missing_values_test[missing_values_test > 0]  # Show only columns with missing values
+
+            # Create a DataFrame for missing values
+
+            missing_values_test_df = pd.DataFrame({
+
+                'Feature Name': missing_values_test.index,
+
+                'Missing Values': missing_values_test.values
+
+            })
+
+            if missing_values_test_df.empty:
+
+                st.write("No missing values occurred in test data.")
+
+            else:
+
+                st.write("Identify Missing Values in Test Data")
+
+                st.dataframe(missing_values_test_df)
+
+            # Plot missing values for test data before filling
+
+            plt.figure(figsize=(10, 5))
+
+            sns.barplot(x=missing_values_test.index, y=missing_values_test.values)
+
+            plt.title('Missing Values in Test Data (Before Filling)')
+
+            plt.xticks(rotation=45)
+
+            st.pyplot(plt)
+
+ 
+
+            # Fill missing values in test data
+
+            progress_text.text("Filling missing values in test data...")
+
+            progress_bar.progress(0.3)  # Update to 30%
+
+ 
+
+            # Define fill strategies for each column
+
+            fill_strategies_test = {
+
+                "Transaction_Date": "mode",
+
+                "Transaction_Time": "mode",
+
+                "Customer_Type": "mode",
+
+                "Transaction_Amount": "mean"
+
+            }
+
+            num_steps_test = len(fill_strategies_test)
+
+            for i, (col, strategy) in enumerate(fill_strategies_test.items()):
+
+                if test_data[col].isnull().any():
+
+                    if strategy == "mode":
+
+                        test_data[col].fillna(test_data[col].mode()[0], inplace=True)
+
+                    elif strategy == "mean":
+
+                        test_data[col].fillna(test_data[col].mean(), inplace=True)
+
+                    elif strategy == "median":
+
+                        test_data[col].fillna(test_data[col].median(), inplace=True)
+
+                progress_bar.progress(0.3 + (i + 1) / num_steps_test * 0.4)  # Update progress bar
+
+ 
+
+            # Create a DataFrame for missing values after filling
+
+            missing_values_test_after = test_data.isna().sum()
+
+            missing_values_test_after_df = pd.DataFrame({
+
+                'Feature Name': missing_values_test_after.index,
+
+                'Missing Values After Filling': missing_values_test_after.values
+
+            })
+
+            # Display the DataFrame for missing values after filling
+
+            st.subheader("Missing Values After Filling in Test Data")
+
+            st.dataframe(missing_values_test_after_df)
+
+ 
+
+            # Plot missing values for test data after filling
+
+            plt.figure(figsize=(10, 5))
+
+            sns.barplot(x=missing_values_test_after.index, y=missing_values_test_after.values)
+
+            plt.title('Identify Missing Values in Test Data (After Filling)')
+
+            plt.xticks(rotation=45)
+
+            st.pyplot(plt)
+
+ 
+
+            st.write("Test Data Descriptive Statistics:")
+
+            st.dataframe(test_data.describe())
+
+ 
+
+        # Encoding
+
+        st.subheader("Encoding on Train and Test Data")
+
+        # Create two columns for original and encoded data
+
+        original_col, encoded_col = st.columns(2)
+
+        with original_col:
+
+            # Show original training and test data before encoding
+
+            st.write("Original Training Data:")
+
+            st.dataframe(train_data.head())
+
+            st.write("Original Test Data:")
+
+            st.dataframe(test_data.head())
+
+        with encoded_col:
+
+            # Perform encoding
+
+            encoder = LabelEncoder()
+
+            train_data_encoded = encode_categorical(train_data.copy(), encoder)
+
+            test_data_encoded = encode_categorical(test_data.copy(), encoder)
+
+            # Show encoded training and test data after encoding
+
+            st.write("Encoded Training Data:")
+
+            st.dataframe(train_data_encoded.head())
+
+            st.write("Encoded Test Data:")
+
+            st.dataframe(test_data_encoded.head())
+
+            progress_text.text("Encoded successfully")
+
+            progress_bar.progress(0.5)
+
+ 
+
+        # Process date-time features
+
+        train_data_encoded = process_datetime(train_data_encoded)
+
+        test_data_encoded = process_datetime(test_data_encoded)
+
+ 
+
+        # Add Transaction Frequency Feature
+
+        train_data_encoded = add_transaction_frequency(train_data_encoded)
+
+        test_data_encoded = add_transaction_frequency(test_data_encoded)
+
+ 
+
+        # Show which features were added
+
+        st.write("Encoded Features: ['Customer_Type', 'Transaction_Type']")
+
+        st.write("Added Feature: Transaction_Frequency")
+
+ 
+
+        # Define features and target variable
+
+        X_train, y_train = train_data_encoded.drop('Is_Fraudulent', axis=1), train_data_encoded['Is_Fraudulent']
+
+        X_test, y_test = test_data_encoded.drop('Is_Fraudulent', axis=1), test_data_encoded['Is_Fraudulent']
+
+ 
+
+        rf = RandomForestClassifier(n_estimators=100, random_state=42)
+
+        rf.fit(X_train, y_train)
+
+        feature_importances = pd.DataFrame({'Feature': X_train.columns, 'Importance': rf.feature_importances_})
+
+        feature_importances = feature_importances.sort_values(by='Importance', ascending=False)
+
+        selected_features = feature_importances.head(10)['Feature'].tolist()
+
+ 
+
+        st.subheader("Feature Importance")
+
+        # Create two columns for feature importance table and plot
+
+        importance_col1, importance_col2 = st.columns(2)
+
+        with importance_col1:
+
+            st.dataframe(feature_importances.head(10))  # Display the feature importance table
+
+            progress_text.text("Feature importance displayed successfully")
+
+            progress_text.text("model performance loading")
+
+            progress_bar.progress(0.7)
+
+        with importance_col2:
+
+            # Plot feature importance
+
+            plt.figure(figsize=(10, 5))
+
+            sns.barplot(x='Importance', y='Feature', data=feature_importances.head(10))
+
+            plt.title('Top 10 Feature Importances')
+
+            st.pyplot(plt)  # Corrected line
+
+ 
+
+        X_train = X_train[selected_features]
+
+        X_test = X_test[selected_features]
+
+ 
+
+        ### BEGIN INTEGRATED ADDITION - Bias Testing, Basic Model and Evaluation ###
+
+ 
+
+        st.subheader("Bias Testing on Uploaded Training Data")
+
+        try:
+
+            # Bias testing for Customer_Type (pre-training)
+
+            bias_customer = train_data.groupby(['Customer_Type', 'Is_Fraudulent']).size().unstack(fill_value=0)
+
+            if bias_customer is not None and (0 in bias_customer.columns and 1 in bias_customer.columns) and (bias_customer[0] + bias_customer[1]).any():
+
+                bias_customer['Fraud_Probability'] = bias_customer[1] / (bias_customer[0] + bias_customer[1])
+
+                st.write("Customer_Type Bias (Fraud Probability - Pre-Training):")
+
+                st.dataframe(bias_customer)
+
+ 
+
+                # Plot fraud probability by Customer_Type
+
+                plt.figure(figsize=(8, 4))
+
+                sns.barplot(x=bias_customer.index, y=bias_customer['Fraud_Probability'])
+
+                plt.title('Customer_Type Fraud Probability (Pre-Training)')
+
+                plt.ylabel('Fraud Probability')
+
+                plt.xlabel('Customer_Type')
+
+                plt.xticks(rotation=45)
+
+                st.pyplot(plt)
+
+            else:
+
+                st.warning("Insufficient data for pre-training bias analysis on Customer_Type.")
+
+ 
+
+            # Bias testing for Transaction_Type (pre-training)
+
+            bias_transaction = train_data.groupby(['Transaction_Type', 'Is_Fraudulent']).size().unstack(fill_value=0)
+
+            if bias_transaction is not None and (0 in bias_transaction.columns and 1 in bias_transaction.columns) and (bias_transaction[0] + bias_transaction[1]).any():
+
+                bias_transaction['Fraud_Probability'] = bias_transaction[1] / (bias_transaction[0] + bias_transaction[1])
+
+                st.write("Transaction_Type Bias (Fraud Probability - Pre-Training):")
+
+                st.dataframe(bias_transaction)
+
+ 
+
+                # Plot fraud probability by Transaction_Type
+
+                plt.figure(figsize=(8, 4))
+
+                sns.barplot(x=bias_transaction.index, y=bias_transaction['Fraud_Probability'])
+
+                plt.title('Transaction_Type Fraud Probability (Pre-Training)')
+
+                plt.ylabel('Fraud Probability')
+
+                plt.xlabel('Transaction_Type')
+
+                plt.xticks(rotation=45)
+
+                st.pyplot(plt)
+
+            else:
+
+                st.warning("Insufficient data for pre-training bias analysis on Transaction_Type.")
+
+ 
+
+        except Exception as e:
+
+            st.error(f"Error during bias testing: {e}")
+
+ 
+
+ 
+
+        ### END INTEGRATED ADDITION ###
+
+ 
+
+        models = {
+
+            "Random Forest": RandomForestClassifier(n_estimators=100, max_depth=5, random_state=2, min_samples_split=10, min_samples_leaf=5),
+
+            "Logistic Regression": LogisticRegression(),
+
+            "Gradient Boosting": GradientBoostingClassifier(n_estimators=100, learning_rate=0.1, max_depth=3, random_state=2),
+
+            "SVM": SVC(),
+
+            "KNN": KNeighborsClassifier(n_neighbors=10),
+
+            "XGBoost": XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42)
+
+        }
+
+        resampling_strategies = {
+
+            "SMOTE": SMOTE(random_state=42),
+
+            "SMOTEENN": SMOTEENN(random_state=42),
+
+            "ADASYN": ADASYN(random_state=42)
+
+        }
+
+        best_model = None
+
+        best_f1 = 0
+
+        best_model_name = ""
+
+        best_resampling = ""
+
+        model_performance = []
+
+        for resampling_name, resampler in resampling_strategies.items():
+
+            for model_name, model in models.items():
+
+                pipeline = ImbPipeline([
+
+                    ('scaler', StandardScaler()),
+
+                    ('resampler',resampler),
+
+                    ('classifier', model)
+
+                ])
+
+                pipeline.fit(X_train, y_train)
+
+                y_pred = pipeline.predict(X_test)
+
+                f1 = f1_score(y_test, y_pred)
+
+                model_performance.append((model_name, resampling_name, f1))
+
+                if f1 > best_f1:
+
+                    best_f1 = f1
+
+                    best_model = pipeline
+
+                    best_model_name = model_name
+
+                    best_resampling = resampling_name
+
+ 
+
+        # Display model performance
+
+        st.subheader("Model Performance Analysis")
+
+        # Create two columns for model performance table and best model performance
+
+        performance_col1, performance_col2 = st.columns(2)
+
+        with performance_col1:
+
+            performance_df = pd.DataFrame(model_performance, columns=["Model", "Resampling", "F1 Score"])
+
+            st.dataframe(performance_df)
+
+            progress_text.text("Model performance completed........")
+
+            progress_bar.progress(0.8)
+
+        with performance_col2:
+
+            st.write(f"Best Model: {best_model_name} with {best_resampling}, F1 Score: {best_f1:.4f}")
+
+            y_test_pred = best_model.predict(X_test)
+
+            st.text(classification_report(y_test, y_test_pred))
+
+ 
+
+            # --- Bias Testing After Training  ---
+
+            # --- Bias Testing After Training  ---
+
+        st.subheader("Bias Testing After Model Training")
+
+        try:
+
+            # Create a DataFrame including original categorical columns and predictions
+
+            predictions_df = pd.DataFrame({
+
+                'Customer_Type': test_data['Customer_Type'],
+
+                'Transaction_Type': test_data['Transaction_Type'],
+
+                'Actual_Label': y_test.map({0: test_data['Is_Fraudulent'].unique()[0], 1: test_data['Is_Fraudulent'].unique()[1]}), # Map back original labels
+
+                'Predicted_Label': y_test_pred
+
+            })
+
+ 
+
+            # Group by Customer_Type and Predicted_Label to calculate fraud prediction probability
+
+            bias_df_after_customer = predictions_df.groupby(['Customer_Type', 'Predicted_Label']).size().unstack(fill_value=0)
+
+            if bias_df_after_customer is not None and bias_df_after_customer.sum(axis=1).any():
+
+                bias_df_after_customer['Fraud_Probability'] = bias_df_after_customer.get(1, 0) / (bias_df_after_customer.sum(axis=1))
+
+                st.write("Customer_Type Bias (Post Training Fraud Probability):")
+
+                st.dataframe(bias_df_after_customer)
+
+ 
+
+                # Plotting the bias for Customer_Type after training
+
+                plt.figure(figsize=(8, 4))
+
+                sns.barplot(x=bias_df_after_customer.index, y=bias_df_after_customer['Fraud_Probability'])
+
+                plt.title('Customer_Type Fraud Probability (Post-Training)')
+
+                plt.ylabel('Fraud Probability')
+
+                plt.xlabel('Customer_Type')
+
+                plt.xticks(rotation=45)
+
+                st.pyplot(plt)
+
+            else:
+
+                st.warning("Insufficient data for post-training bias analysis on Customer_Type.")
+
+ 
+
+            # Group by Transaction_Type and Predicted_Label to calculate fraud prediction probability
+
+            bias_df_after_transaction = predictions_df.groupby(['Transaction_Type', 'Predicted_Label']).size().unstack(fill_value=0)
+
+            if bias_df_after_transaction is not None and bias_df_after_transaction.sum(axis=1).any():
+
+                bias_df_after_transaction['Fraud_Probability'] = bias_df_after_transaction.get(1, 0) / (bias_df_after_transaction.sum(axis=1))
+
+                st.write("Transaction_Type Bias (Post Training Fraud Probability):")
+
+                st.dataframe(bias_df_after_transaction)
+
+ 
+
+                # Plotting the bias for Transaction_Type after training
+
+                plt.figure(figsize=(8, 4))
+
+                sns.barplot(x=bias_df_after_transaction.index, y=bias_df_after_transaction['Fraud_Probability'])
+
+                plt.title('Transaction_Type Fraud Probability (Post-Training)')
+
+                plt.ylabel('Fraud Probability')
+
+                plt.xlabel('Transaction_Type')
+
+                plt.xticks(rotation=45)
+
+                st.pyplot(plt)
+
+            else:
+
+                st.warning("Insufficient data for post-training bias analysis on Transaction_Type.")
+
+ 
+
+        except Exception as e:
+
+            st.error(f"Error during bias testing after model training: {e}")
+
+ 
+
+ 
+
+        if best_model_name == "Random Forest":
+
+            param_grid = {
+
+                'classifier__n_estimators': [100, 200, 300],
+
+                'classifier__max_depth': [3, 5, 10],
+
+                'classifier__min_samples_split': [5, 10, 20],
+
+                'classifier__min_samples_leaf': [2, 5, 10]
+
+            }
+
+            grid_search = GridSearchCV(best_model, param_grid, scoring='f1', cv=3, verbose=1, n_jobs=-1)
+
+            grid_search.fit(X_train, y_train)
+
+            best_model = grid_search.best_estimator_
+
+            y_test_pred_tuned = best_model.predict(X_test) # Get predictions from the tuned model
+
+ 
+
+        # Confusion Matrix
+
+        st.subheader("Confusion Matrix - To Identify True Positive and True Negative And Correlation Matrix")
+
+        confusion_col1, confusion_col2 = st.columns(2)
+
+        with confusion_col1:
+
+            cm = confusion_matrix(y_test, y_test_pred if best_model_name != "Random Forest" else y_test_pred_tuned)
+
+            plt.figure(figsize=(8, 6))
+
+            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=['Not Fraudulent', 'Fraudulent'], yticklabels=['Not Fraudulent', 'Fraudulent'])
+
+            plt.ylabel('Actual')
+
+            plt.xlabel('Predicted')
+
+            st.pyplot(plt)
+
+            progress_text.text("Confusion matrix displayed successfully")
+
+            progress_bar.progress(0.9)
+
+        with confusion_col2:
+
+            correlation_matrix = train_data_encoded.corr()
+
+            plt.figure(figsize=(12, 8))
+
+            sns.heatmap(correlation_matrix, annot=True, fmt=".2f", cmap='coolwarm')
+
+            st.pyplot(plt)
+
+ 
+
+        # Random Prediction
+
+        st.subheader("Random Prediction")
+
+        # Predefined feature values
+
+        transaction_date = pd.to_datetime("2025-01-16")
+
+        transaction_time = pd.to_datetime("08:53:56").time()
+
+        customer_id = 128157
+
+        customer_type = 'Premium'  # Predefined customer type
+
+        transaction_type = 'Online'  # Predefined transaction type
+
+        transaction_amount = 4757.89  # Predefined transaction amount
+
+ 
+
+        # Prepare the input data for prediction
+
+        input_data = pd.DataFrame({
+
+            'Customer_ID': [customer_id],
+
+            'Customer_Type': [customer_type],
+
+            'Transaction_Type': [transaction_type],
+
+            'Transaction_Amount': [transaction_amount],
+
+            'Day': [transaction_date.day],
+
+            'Hour': [transaction_time.hour],
+
+            'Minute': [transaction_time.minute],
+
+            'Transaction_Frequency': [1]  # Assuming this is the first transaction for simplicity
+
+        })
+
+ 
+
+        # Encode the input data
+
+        input_data_encoded = encode_categorical(input_data.copy(), encoder)
+
+        # Ensure all selected features are present, filling with a default value if not
+
+        for feature in selected_features:
+
+            if feature not in input_data_encoded.columns:
+
+                input_data_encoded[feature] = 0 # Or some other appropriate default
+
+ 
+
+        input_data_encoded = input_data_encoded[selected_features]  # Select only the features used in the model
+
+ 
+
+        # Make prediction
+
+        prediction = best_model.predict(input_data_encoded)
+
+ 
+
+        # Create two columns for prediction and actual value
+
+        pred_col, actual_col = st.columns(2)
+
+        with pred_col:
+
+            st.write("Input Data for Prediction:")
+
+            st.dataframe(input_data)
+
+            st.write("Predicted Value:")
+
+            if prediction[0] == 1:
+
+                st.markdown("<h3 style='color: green;'>Fraudulent</h3>", unsafe_allow_html=True)
+
+            else:
+
+                st.markdown("<h3 style='color: red;'>Not Fraudulent</h3>", unsafe_allow_html=True)
+
+        with actual_col:
+
+            st.write("Input Data for Comparison:")
+
+            st.dataframe(input_data)
+
+            # Here you can define the actual value for comparison; using 1 as example
+
+            actual_value = 1
+
+            st.write("Actual Value:")
+
+            if actual_value == 1:
+
+                st.markdown("<h3 style='color: green;'>Fraudulent</h3>", unsafe_allow_html=True)
+
+            else:
+
+                st.markdown("<h3 style='color: red;'>Not Fraudulent</h3>", unsafe_allow_html=True)
+
+ 
+
+        # Final update to 100%
+
+        progress_text.text("Completed!")
+
+        progress_bar.progress(1.0)  # Set progress to 100%
+
+        # Conclusion
+
+        st.subheader("Conclusion")
+
+        if prediction[0] == actual_value:
+
+            st.success("Correct Prediction! New Data Pattern is not detected in input data")
+
+        else:
+
+            st.error("Potential Bias Detected! New data pattern may indicate biased model behavior.")
+
+    else:
+
+        st.warning("Please upload both training and test data files.")
+
