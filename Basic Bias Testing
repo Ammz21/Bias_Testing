@@ -24,6 +24,8 @@ from sklearn.model_selection import GridSearchCV, train_test_split
 
 from sklearn.metrics import classification_report, f1_score, confusion_matrix, accuracy_score, roc_auc_score
 
+from fairlearn.metrics import demographic_parity_difference, demographic_parity_ratio, equalized_odds_difference
+
 from imblearn.pipeline import Pipeline as ImbPipeline
 
 from imblearn.over_sampling import SMOTE, ADASYN
@@ -69,6 +71,77 @@ def add_transaction_frequency(df):
     df['Transaction_Frequency'] = df.groupby('Customer_ID')['Customer_ID'].transform('count')
 
     return df
+
+# --- Advanced Bias: helper utilities ---
+
+def _safe_rate(numerator, denominator):
+    return (numerator / denominator) if denominator > 0 else 0.0
+
+
+def _group_confusion(y_true_group, y_pred_group):
+    try:
+        tn, fp, fn, tp = confusion_matrix(y_true_group, y_pred_group, labels=[0, 1]).ravel()
+    except ValueError:
+        # Handle degenerate cases
+        tn = np.sum((y_true_group == 0) & (y_pred_group == 0))
+        fp = np.sum((y_true_group == 0) & (y_pred_group == 1))
+        fn = np.sum((y_true_group == 1) & (y_pred_group == 0))
+        tp = np.sum((y_true_group == 1) & (y_pred_group == 1))
+    total_pos = tp + fn
+    total_neg = tn + fp
+    tpr = _safe_rate(tp, total_pos)
+    fpr = _safe_rate(fp, total_neg)
+    fnr = _safe_rate(fn, total_pos)
+    return tn, fp, fn, tp, tpr, fpr, fnr
+
+
+def _advanced_bias_for_attribute(attr_name, attr_values, y_true, y_pred):
+    unique_groups = pd.Series(attr_values).astype(str).unique()
+    rows = []
+    for g in unique_groups:
+        mask = (pd.Series(attr_values).astype(str) == g).values
+        if mask.sum() == 0:
+            continue
+        yt_g = np.asarray(y_true)[mask]
+        yp_g = np.asarray(y_pred)[mask]
+        tn, fp, fn, tp, tpr, fpr, fnr = _group_confusion(yt_g, yp_g)
+        positive_rate = _safe_rate(np.sum(yp_g == 1), len(yp_g))
+        rows.append({
+            'attribute': attr_name,
+            'group': g,
+            'count': int(len(yp_g)),
+            'positive_rate': positive_rate,
+            'tpr': tpr,
+            'fpr': fpr,
+            'fnr': fnr,
+            'tp': int(tp), 'fp': int(fp), 'tn': int(tn), 'fn': int(fn)
+        })
+    per_group_df = pd.DataFrame(rows).sort_values('group') if rows else pd.DataFrame()
+    # Global fairness metrics
+    try:
+        dp_diff = demographic_parity_difference(y_true, y_pred, sensitive_features=pd.Series(attr_values).astype(str))
+        dp_ratio = demographic_parity_ratio(y_true, y_pred, sensitive_features=pd.Series(attr_values).astype(str))
+    except Exception:
+        dp_diff, dp_ratio = None, None
+    try:
+        eod = equalized_odds_difference(y_true, y_pred, sensitive_features=pd.Series(attr_values).astype(str))
+    except Exception:
+        eod = None
+    # Manual TPR/FPR diffs if at least two groups
+    tpr_diff = None
+    fpr_diff = None
+    if not per_group_df.empty and len(per_group_df) >= 2:
+        tpr_diff = per_group_df['tpr'].max() - per_group_df['tpr'].min()
+        fpr_diff = per_group_df['fpr'].max() - per_group_df['fpr'].min()
+    summary = {
+        'attribute': attr_name,
+        'demographic_parity_difference': dp_diff,
+        'demographic_parity_ratio': dp_ratio,
+        'equalized_odds_difference': eod,
+        'tpr_difference': tpr_diff,
+        'fpr_difference': fpr_diff,
+    }
+    return summary, per_group_df
 
  
 
@@ -828,12 +901,135 @@ if st.button("Run Model"):
 
             st.error(f"Error during bias testing after model training: {e}")
 
- 
+        # --- Advanced Bias Testing ---
+        st.subheader("Advanced Bias Testing")
+        try:
+            # Use tuned predictions for RF to be consistent with confusion matrix
+            y_adv = None
+            if 'y_test_pred_tuned' in locals() and best_model_name == "Random Forest":
+                y_adv = y_test_pred_tuned
+            else:
+                y_adv = y_test_pred
 
- 
+            # Try to get probabilities for threshold analysis
+            y_scores = None
+            try:
+                if hasattr(best_model, 'predict_proba'):
+                    y_scores = best_model.predict_proba(X_test)[:, 1]
+            except Exception:
+                y_scores = None
+
+            advanced_reports = []
+            per_group_tables = []
+            for attr in ['Customer_Type', 'Transaction_Type']:
+                summary, per_group_df = _advanced_bias_for_attribute(attr, test_data[attr], y_test.values, y_adv)
+                advanced_reports.append(summary)
+                if not per_group_df.empty:
+                    per_group_tables.append((attr, per_group_df))
+
+            adv_df = pd.DataFrame(advanced_reports)
+            st.write("Fairness Summary (per attribute):")
+            st.dataframe(adv_df)
+
+            # Show per-group tables and quick plots
+            for attr, table in per_group_tables:
+                st.write(f"Per-group performance for {attr}:")
+                st.dataframe(table[['group','count','positive_rate','tpr','fpr','fnr']])
+                fig, ax = plt.subplots(1, 2, figsize=(12, 4))
+                sns.barplot(data=table, x='group', y='tpr', ax=ax[0])
+                ax[0].set_title(f'{attr} - TPR by group')
+                ax[0].tick_params(axis='x', rotation=45)
+                sns.barplot(data=table, x='group', y='fpr', ax=ax[1])
+                ax[1].set_title(f'{attr} - FPR by group')
+                ax[1].tick_params(axis='x', rotation=45)
+                st.pyplot(fig)
+
+            # Intersectional analysis
+            inter_df = test_data.copy()
+            inter_df['Intersection'] = inter_df['Customer_Type'].astype(str) + ' | ' + inter_df['Transaction_Type'].astype(str)
+            grp = inter_df.groupby('Intersection').size().rename('count')
+            sel_rate = inter_df.assign(pred=y_adv).groupby('Intersection')['pred'].mean().rename('positive_rate')
+            inter_table = pd.concat([grp, sel_rate], axis=1).reset_index().sort_values('count', ascending=False)
+            st.write("Intersectional groups (size and positive rate):")
+            st.dataframe(inter_table)
+
+            # Threshold sweep (if probabilities available)
+            if y_scores is not None:
+                thresholds = np.linspace(0.1, 0.9, 9)
+                sweep_rows = []
+                for t in thresholds:
+                    preds_t = (y_scores >= t).astype(int)
+                    for attr in ['Customer_Type', 'Transaction_Type']:
+                        try:
+                            dpd = demographic_parity_difference(y_test.values, preds_t, sensitive_features=test_data[attr].astype(str))
+                            eod = equalized_odds_difference(y_test.values, preds_t, sensitive_features=test_data[attr].astype(str))
+                            sweep_rows.append({'threshold': float(t), 'attribute': attr, 'dp_diff': dpd, 'eq_odds_diff': eod})
+                        except Exception:
+                            continue
+                if sweep_rows:
+                    sweep_df = pd.DataFrame(sweep_rows)
+                    st.write("Threshold sweep (Demographic Parity and Equalized Odds differences):")
+                    st.dataframe(sweep_df)
+
+            # Simple counterfactual flips on encoded features, if present in selected features
+            cf_rows = []
+            selected_set = set(selected_features)
+            # Build encoded mapping from test_data_encoded for robustness
+            if 'Customer_Type' in selected_set:
+                code_map = {c: None for c in sorted(test_data_encoded['Customer_Type'].unique())}
+                codes = sorted(list(code_map.keys()))
+                cyc_map = {codes[i]: codes[(i+1) % len(codes)] for i in range(len(codes))}
+                X_cf = X_test.copy()
+                X_cf_loc = X_cf.copy()
+                X_cf_loc['Customer_Type'] = X_cf_loc['Customer_Type'].map(lambda v: cyc_map.get(v, v))
+                try:
+                    if y_scores is not None:
+                        scores_cf = best_model.predict_proba(X_cf_loc)[:, 1]
+                        mean_change = float(np.mean(np.abs(y_scores - scores_cf)))
+                        pct_changed = float(np.mean((y_scores >= 0.5) != (scores_cf >= 0.5)) * 100)
+                    else:
+                        preds_cf = best_model.predict(X_cf_loc)
+                        mean_change = None
+                        pct_changed = float(np.mean(y_adv != preds_cf) * 100)
+                    cf_rows.append({'test': 'Flip Customer_Type', 'mean_prob_change': mean_change, 'percent_label_changed': pct_changed})
+                except Exception:
+                    pass
+            if 'Transaction_Type' in selected_set:
+                codes = sorted(test_data_encoded['Transaction_Type'].unique())
+                cyc_map = {codes[i]: codes[(i+1) % len(codes)] for i in range(len(codes))}
+                X_cf_loc = X_test.copy()
+                X_cf_loc['Transaction_Type'] = X_cf_loc['Transaction_Type'].map(lambda v: cyc_map.get(v, v))
+                try:
+                    if y_scores is not None:
+                        scores_cf = best_model.predict_proba(X_cf_loc)[:, 1]
+                        mean_change = float(np.mean(np.abs(y_scores - scores_cf)))
+                        pct_changed = float(np.mean((y_scores >= 0.5) != (scores_cf >= 0.5)) * 100)
+                    else:
+                        preds_cf = best_model.predict(X_cf_loc)
+                        mean_change = None
+                        pct_changed = float(np.mean(y_adv != preds_cf) * 100)
+                    cf_rows.append({'test': 'Flip Transaction_Type', 'mean_prob_change': mean_change, 'percent_label_changed': pct_changed})
+                except Exception:
+                    pass
+            if cf_rows:
+                st.write("Counterfactual flips (sensitivity):")
+                st.dataframe(pd.DataFrame(cf_rows))
+
+            # Allow download of summary
+            bias_report = adv_df.copy()
+            if not per_group_tables:
+                per_groups_concat = pd.DataFrame()
+            else:
+                per_groups_concat = pd.concat([df.assign(attribute=attr) for attr, df in per_group_tables], ignore_index=True)
+            with st.expander("Download advanced bias reports"):
+                st.download_button("Download summary CSV", data=bias_report.to_csv(index=False).encode('utf-8'), file_name='advanced_bias_summary.csv', mime='text/csv')
+                if not per_groups_concat.empty:
+                    st.download_button("Download per-group CSV", data=per_groups_concat.to_csv(index=False).encode('utf-8'), file_name='advanced_bias_per_group.csv', mime='text/csv')
+
+        except Exception as e:
+            st.error(f"Error during advanced bias testing: {e}")
 
         if best_model_name == "Random Forest":
-
             param_grid = {
 
                 'classifier__n_estimators': [100, 200, 300],
@@ -845,16 +1041,10 @@ if st.button("Run Model"):
                 'classifier__min_samples_leaf': [2, 5, 10]
 
             }
-
             grid_search = GridSearchCV(best_model, param_grid, scoring='f1', cv=3, verbose=1, n_jobs=-1)
-
             grid_search.fit(X_train, y_train)
-
             best_model = grid_search.best_estimator_
-
             y_test_pred_tuned = best_model.predict(X_test) # Get predictions from the tuned model
-
- 
 
         # Confusion Matrix
 
